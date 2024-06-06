@@ -18,8 +18,8 @@ from model import GPTConfig, GPT
 
 argparser = argparse.ArgumentParser(description="Parameters for training the GPT model")
 argparser.add_argument('--checkpoints_dir', type=str, default='checkpoints', help='Directory to save model checkpoints')
-argparser.add_argument('--eval_interval', type=int, default=400, help='How often to evaluate the model')
 argparser.add_argument('--log_interval', type=int, default=10, help='How often to log training info')
+argparser.add_argument('--eval_interval', type=int, default=250, help='How often to evaluate the model')
 argparser.add_argument('--eval_iters', type=int, default=200, help='How many iters to use for evaluation')
 argparser.add_argument('--eval_only', action='store_true', help='If True, script exits after the first evaluation')
 argparser.add_argument('--always_save_checkpoint', action='store_true', help='If True, always save a checkpoint after each evaluation')
@@ -28,7 +28,7 @@ argparser.add_argument('--wandb_log', action='store_true', help='If True, log to
 argparser.add_argument('--wandb_project', type=str, default='harrypotter', help='Project name for wandb')
 argparser.add_argument('--wandb_run_name', type=str, default=f"HP - {str(time.time())}", help='Run name for wandb')
 argparser.add_argument('--dataset', type=str, default='harrypotter', help='Dataset to use for training')
-argparser.add_argument('--gradient_accumulation_steps', type=int, default=5*8, help='Number of gradient accumulation steps')
+argparser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of gradient accumulation steps')
 argparser.add_argument('--batch_size', type=int, default=12, help='Batch size for training')
 argparser.add_argument('--block_size', type=int, default=1024, help='Block size for training')
 argparser.add_argument('--n_layer', type=int, default=6, help='Number of layers in the model')
@@ -55,8 +55,8 @@ args = argparser.parse_args()
 
 
 checkpoints_dir = args.checkpoints_dir
-eval_interval = args.eval_interval
 log_interval = args.log_interval
+eval_interval = args.eval_interval
 eval_iters = args.eval_iters
 eval_only = args.eval_only
 always_save_checkpoint = args.always_save_checkpoint
@@ -162,6 +162,8 @@ else:
     iter_num = checkpoint['iter_num']
     best_val_loss = checkpoint['best_val_loss']
 
+print(f"model config {model.config}")
+
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
     model_args['block_size'] = block_size # so that the checkpoint will have the right value
@@ -232,7 +234,7 @@ while True:
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0:
         losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, learning rate {lr:.4f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
@@ -252,7 +254,7 @@ while True:
                     'best_val_loss': best_val_loss,
                     'config': model.config,
                 }
-                save_path = os.path.join(checkpoints_dir, 'ckpt.pt')
+                save_path = os.path.join(checkpoints_dir, f'{dataset}.ckpt.pt')
                 print(f"saving checkpoint to {save_path}")
                 torch.save(checkpoint, save_path)
     if iter_num == 0 and eval_only:
