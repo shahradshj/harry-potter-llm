@@ -1,5 +1,4 @@
 torch
 numpy
 tiktoken
-wandb
-tqdm
+transformers

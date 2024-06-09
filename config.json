@@ -1,0 +1,4 @@
+{
+    "running from GPT2 checkpoint": "python train.py --init_from 'gpt2' --dropout 0.1 --learning_rate 5e-5 --min_lr 5e-6 --batch_size 12 --compile",
+    "running from GPT2 checkpoint no compile": "python train.py --init_from 'gpt2' --dropout 0.1 --learning_rate 5e-5 --min_lr 5e-6 --batch_size 12"
+}
