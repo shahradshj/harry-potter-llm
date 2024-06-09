@@ -12,7 +12,6 @@ from contextlib import nullcontext
 
 import numpy as np
 import torch
-import wandb
 
 from model import GPTConfig, GPT
 
@@ -23,18 +22,15 @@ argparser.add_argument('--eval_interval', type=int, default=250, help='How often
 argparser.add_argument('--eval_iters', type=int, default=200, help='How many iters to use for evaluation')
 argparser.add_argument('--eval_only', action='store_true', help='If True, script exits after the first evaluation')
 argparser.add_argument('--always_save_checkpoint', action='store_true', help='If True, always save a checkpoint after each evaluation')
-argparser.add_argument('--init_from', type=str, default='', help='How to initialize the model')
-argparser.add_argument('--wandb_log', action='store_true', help='If True, log to wandb')
-argparser.add_argument('--wandb_project', type=str, default='harrypotter', help='Project name for wandb')
-argparser.add_argument('--wandb_run_name', type=str, default=f"HP - {str(time.time())}", help='Run name for wandb')
+argparser.add_argument('--init_from', type=str, default='',
+                       help='A cheakpoint to initialize the model from or a GPT2 model (gpt2, gpt2-medium, gpt2-large, gpt2-xl) to download and initialize from')
 argparser.add_argument('--dataset', type=str, default='harrypotter', help='Dataset to use for training')
-argparser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of gradient accumulation steps')
-argparser.add_argument('--batch_size', type=int, default=12, help='Batch size for training')
+argparser.add_argument('--batch_size', type=int, default=4, help='Batch size for training')
 argparser.add_argument('--block_size', type=int, default=1024, help='Block size for training')
 argparser.add_argument('--n_layer', type=int, default=6, help='Number of layers in the model')
 argparser.add_argument('--n_head', type=int, default=6, help='Number of heads in the model')
 argparser.add_argument('--n_embd', type=int, default=384, help='Embedding size in the model')
-argparser.add_argument('--dropout', type=float, default=0.2, help='Dropout rate in the model')
+argparser.add_argument('--dropout', type=float, default=0, help='Dropout rate in the model')
 argparser.add_argument('--bias', action='store_true', help='If True, use bias inside LayerNorm and Linear layers')
 argparser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate for the model')
 argparser.add_argument('--max_iters', type=int, default=5000, help='Total number of training iterations')
@@ -45,11 +41,12 @@ argparser.add_argument('--grad_clip', type=float, default=1.0, help='Clip gradie
 argparser.add_argument('--no_decay_lr', action='store_false', help='If True, would not decay the learning rate')
 argparser.add_argument('--warmup_iters', type=int, default=100, help='Number of warmup iterations')
 argparser.add_argument('--lr_decay_iters', type=int, default=5000, help='Number of learning rate decay iterations')
-argparser.add_argument('--min_lr', type=float, default=5e-5, help='Minimum learning rate')
+argparser.add_argument('--min_lr', type=float, default=1e-5, help='Minimum learning rate')
 argparser.add_argument('--backend', type=str, default='nccl', help='Backend for DDP')
 argparser.add_argument('--no_cuda', action='store_true', help='If True, use CPU for training')
 argparser.add_argument('--dtype', type=str, default='bfloat16', help='Data type to use for training')
 argparser.add_argument('--compile', action='store_true', help='If True, use PyTorch 2.0 to compile the model')
+argparser.add_argument('--flops_promised', type=float, default=15e12, help='Promised flops for the model')
 args = argparser.parse_args()
 
 
@@ -61,11 +58,7 @@ eval_iters = args.eval_iters
 eval_only = args.eval_only
 always_save_checkpoint = args.always_save_checkpoint
 init_from = args.init_from
-wandb_log = args.wandb_log
-wandb_project = args.wandb_project
-wandb_run_name = args.wandb_run_name
 dataset = args.dataset
-gradient_accumulation_steps = args.gradient_accumulation_steps
 batch_size = args.batch_size
 block_size = args.block_size
 n_layer = args.n_layer
@@ -87,11 +80,10 @@ backend = args.backend
 no_cuda = args.no_cuda
 dtype = args.dtype
 compile = args.compile
+flops_promised = args.flops_promised
 
 
 os.makedirs(checkpoints_dir, exist_ok=True)
-
-# torch.manual_seed(1337 + seed_offset)
 
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
@@ -122,9 +114,10 @@ def get_batch(split):
         x, y = x.to(device), y.to(device)
     return x, y
 
-# init these up here, can override if init_from='resume' (i.e. from a checkpoint)
+# init these up here, can override if init_from='checkpointname' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
+
 
 
 # model init
@@ -135,6 +128,12 @@ if init_from == '':
     print("Initializing a new model from scratch")
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
+elif init_from.startswith('gpt2'):
+    print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
+    model = GPT.from_pretrained(init_from, dropout)
+    # read off the created config params, so we can store them into checkpoint correctly
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+        model_args[k] = getattr(model.config, k)
 else:
     checkpoint_path = os.path.join(checkpoints_dir, init_from)
     print(f"Resuming training from {checkpoint_path}")
@@ -163,6 +162,8 @@ else:
     best_val_loss = checkpoint['best_val_loss']
 
 print(f"model config {model.config}")
+tokens_per_iter = batch_size * model.config.block_size
+print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
 if block_size < model.config.block_size:
     model.crop_block_size(block_size)
@@ -174,7 +175,7 @@ scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device)
-if init_from == 'resume':
+if init_from.endswith('.ckpt.pt'):
     optimizer.load_state_dict(checkpoint['optimizer'])
 checkpoint = None # free up memory
 
@@ -214,10 +215,6 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
-# logging
-if wandb_log:
-    wandb.init(project=wandb_project, name=wandb_run_name, config=model_args)
-
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
@@ -235,14 +232,6 @@ while True:
     if iter_num % eval_interval == 0:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, learning rate {lr:.4f}")
-        if wandb_log:
-            wandb.log({
-                "iter": iter_num,
-                "train/loss": losses['train'],
-                "val/loss": losses['val'],
-                "lr": lr,
-                "mfu": running_mfu*100, # convert to percentage
-            })
         if losses['val'] < best_val_loss or always_save_checkpoint:
             best_val_loss = losses['val']
             if iter_num > 0:
@@ -260,16 +249,13 @@ while True:
     if iter_num == 0 and eval_only:
         break
 
-    # forward backward update, with optional gradient accumulation to simulate larger batch size
-    # and using the GradScaler if data type is float16
-    for micro_step in range(gradient_accumulation_steps):
-        with ctx:
-            logits, loss = model(X, Y)
-            loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
-        # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        X, Y = get_batch('train')
-        # backward pass, with gradient scaling if training in fp16
-        scaler.scale(loss).backward()
+    # forward backward update, and using the GradScaler if data type is float16
+    with ctx:
+        logits, loss = model(X, Y)
+    # immediately async prefetch next batch while model is doing the forward pass on the GPU
+    X, Y = get_batch('train')
+    # backward pass, with gradient scaling if training in fp16
+    scaler.scale(loss).backward()
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
@@ -286,10 +272,9 @@ while True:
     t0 = t1
     if iter_num % log_interval == 0:
         # get loss as float. note: this is a CPU-GPU sync point
-        # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
-        lossf = loss.item() * gradient_accumulation_steps
+        lossf = loss.item()
         if local_iter_num >= 5: # let the training loop settle a bit
-            mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
+            mfu = raw_model.estimate_mfu(batch_size, dt, flops_promised)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
         print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1

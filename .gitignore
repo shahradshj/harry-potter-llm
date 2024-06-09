@@ -11,3 +11,4 @@ input.txt
 env/
 venv/
 samples/
+harry_potter_llm.egg-info/
