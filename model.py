@@ -6,6 +6,7 @@ https://github.com/karpathy/nanoGPT/blob/master/model.py
 import math
 import inspect
 from dataclasses import dataclass
+import time
 
 import torch
 import torch.nn as nn
@@ -110,6 +111,7 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    init_time: float = time.time()
 
 class GPT(nn.Module):
 

@@ -52,8 +52,7 @@ ctx = nullcontext() if device == 'cpu' else torch.amp.autocast(device_type=devic
 if not os.path.exists(init_from):
     raise FileNotFoundError(f"Can't find model file at {init_from}")
 checkpoint = torch.load(init_from, map_location=device)
-gptconf = GPTConfig(**checkpoint['model_args'])
-model = GPT(gptconf)
+model = GPT(checkpoint['config'])
 state_dict = checkpoint['model']
 unwanted_prefix = '_orig_mod.'
 for k,v in list(state_dict.items()):
@@ -65,6 +64,8 @@ model.eval()
 model.to(device)
 if compile:
     model = torch.compile(model) # requires PyTorch 2.0 (optional)
+
+print(f"model config: {model.config}")
 
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
