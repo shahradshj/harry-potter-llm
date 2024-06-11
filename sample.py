@@ -75,6 +75,8 @@ decode = lambda l: enc.decode(l)
 start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
+os.makedirs(args.samples_dir, exist_ok=True)
+
 # run generation
 with open(save_samples_path, 'w') as f:
     with torch.no_grad():
