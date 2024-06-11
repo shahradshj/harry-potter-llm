@@ -224,7 +224,7 @@ running_mfu = -1.0
 while True:
 
     # determine and set the learning rate for this iteration
-    lr = get_lr(iter_num) if not no_decay_lr else learning_rate
+    lr = get_lr(iter_num) if no_decay_lr else learning_rate
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
