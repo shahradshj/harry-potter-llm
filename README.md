@@ -1,6 +1,6 @@
 # Harry Potter LLM
 
-This repository is for training small and medium sized GPTs. However, my main focus was on creating a model to generate Harry Potter like text. I followed the excellent video by [Andrej Karpathy Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY), and his [nanoGPT](https://github.com/karpathy/nanoGPT) repository.
+This repository is for training small and medium sized GPTs. However, my main focus was on creating a model to generate Harry Potter like text. I followed the excellent video by [Andrej Karpathy Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY), and his [nanoGPT](https://github.com/karpathy/nanoGPT) repository to create this repo.
 
 
 ## install
@@ -36,3 +36,9 @@ To generate sample text from a trained model:
 python sample.py --init_from "{dataset_name}.ckpt.pt"
 ```
 
+### eamples
+
+Sample generated from a model train from scratch on my laptop with a RTX 4060 for 10 minutes using ddeafult parameters:
+```
+
+```

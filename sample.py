@@ -66,6 +66,8 @@ if compile:
     model = torch.compile(model) # requires PyTorch 2.0 (optional)
 
 print(f"model config: {model.config}")
+print(f"number of iterations: {checkpoint['iter_num']}")
+print(f"best validation loss: {checkpoint['best_val_loss']:.4f}")
 
 enc = tiktoken.get_encoding("gpt2")
 encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
